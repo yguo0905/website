@@ -369,11 +369,62 @@ For container-level isolation, if a Container's writable layer and logs usage ex
 
 ## Extended Resources
 
-Kubernetes version 1.8 introduces Extended Resources. Extended Resources are
-fully-qualified resource names outside the `kubernetes.io` domain. Extended
-Resources allow cluster operators to advertise new node-level resources that
-would be otherwise unknown to the system. Extended Resource quantities must be
-integers and cannot be overcommitted.
+Extended Resources are fully-qualified resource names outside the
+`kubernetes.io` domain. They allow cluster operators to advertise and users to
+consume the non-Kubernetes-built-in resources, such as GPUs and software
+licenses.
+
+There are two steps required to use Extended Resources. First, the cluster
+operator must advertise an Extended Resource. Second, users must request the
+Extended Resource in Pods.
+
+### Managing extended resources
+
+#### Node-level extended resources
+
+Node-level extended resources (e.g., GPUs) are tied to nodes. They are usually
+managed by the [Device
+Plugin](https://kubernetes.io/docs/concepts/cluster-administration/device-plugins/)
+running on each node.
+
+#### Cluster-level extended resources
+
+Cluster-level extended resources (e.g., software licenses) are not tied to
+nodes. They are usually managed by scheduler extenders, which handle the
+resource comsumption, quota and so on.
+
+You can specify the extended resources that are handled by scheduler extenders
+in [scheduler policy
+configuration](https://github.com/kubernetes/kubernetes/blob/release-1.10/pkg/scheduler/api/v1/types.go#L31).
+
+**Example:**
+
+The below scheduler policy configuration indicates that the cluster-level
+extended resource "example.com/foo" is handled by scheduler extender.
+ - The scheduler will only send a pod to the scheduler extender iff the pod
+   requests "example.com/foo".
+ - The `ignoredByScheduler` indicates that scheduler will skip checking the
+   "example.com/foo" resource in its `PodFitsResources` predicate.
+
+```json
+{
+  "kind": "Policy",
+  "apiVersion": "v1",
+  "extenders": [
+    {
+      ...
+      "ManagedResources": [
+        {
+          "name": "example.com/foo",
+          "ignoredByScheduler": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Consuming extended resources
 
 Users can consume Extended Resources in Pod specs just like CPU and memory.
 The scheduler takes care of the resource accounting so that no more than the
@@ -387,39 +438,6 @@ _invalid_ quantities are `0.5` and `1500m`.
 Users can use any domain name prefix other than "`kubernetes.io`" which is reserved.
 {: .note}
 
-There are two steps required to use Extended Resources. First, the
-cluster operator must advertise a per-node Extended Resource on one or more
-nodes. Second, users must request the Extended Resource in Pods.
-
-To advertise a new Extended Resource, the cluster operator should
-submit a `PATCH` HTTP request to the API server to specify the available
-quantity in the `status.capacity` for a node in the cluster. After this
-operation, the node's `status.capacity` will include a new resource. The
-`status.allocatable` field is updated automatically with the new resource
-asynchronously by the kubelet. Note that because the scheduler uses the
-node `status.allocatable` value when evaluating Pod fitness, there may
-be a short delay between patching the node capacity with a new resource and the
-first pod that requests the resource to be scheduled on that node.
-
-**Example:**
-
-Here is an example showing how to use `curl` to form an HTTP request that
-advertises five "example.com/foo" resources on node `k8s-node-1` whose master
-is `k8s-master`.
-
-```shell
-curl --header "Content-Type: application/json-patch+json" \
---request PATCH \
---data '[{"op": "add", "path": "/status/capacity/example.com~1foo", "value": "5"}]' \
-http://k8s-master:8080/api/v1/nodes/k8s-node-1/status
-```
-
-**Note**: In the preceding request, `~1` is the encoding for the character `/`
-in the patch path. The operation path value in JSON-Patch is interpreted as a
-JSON-Pointer. For more details, see
-[IETF RFC 6901, section 3](https://tools.ietf.org/html/rfc6901#section-3).
-{: .note}
-
 To consume an Extended Resource in a Pod, include the resource name as a key
 in the `spec.containers[].resources.limits` map in the container spec.
 
@@ -427,14 +445,13 @@ in the `spec.containers[].resources.limits` map in the container spec.
 must be equal if both are present in a container spec.
 {: .note}
 
-The Pod is scheduled only if all of the resource requests are
-satisfied, including cpu, memory and any Extended Resources. The Pod will
-remain in the `PENDING` state as long as the resource request cannot be met by
-any node.
+A Pod is scheduled only if all of the resource requests are satisfied, including
+CPU, memory and any Extended Resources. The Pod will remain in the `PENDING`
+state as long as the resource request cannot be satisfied.
 
 **Example:**
 
-The Pod below requests 2 cpus and 1 "example.com/foo" (an extended resource.)
+The Pod below requests 2 CPUs and 1 "example.com/foo" (an extended resource).
 
 ```yaml
 apiVersion: v1
